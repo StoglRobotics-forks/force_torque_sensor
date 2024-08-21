@@ -8,10 +8,8 @@ import threading
 import rclpy
 import rclpy.duration
 from rclpy.node import Node
-from builtin_interfaces.msg import Duration
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import Vector3, WrenchStamped
-from std_msgs.msg import String
 
 
 class CalibrationNode(Node):
@@ -22,7 +20,7 @@ class CalibrationNode(Node):
         ### PARAMS:
         self.robot = "yaskawa"
         self.robot_name = "hc20sdtp"
-        self.store_to_file = False
+        self.gravity_axis_in_sensor_frame = "x"
 
         # switch-case on robot name to get these parameters
         self.joint_names = ['joint_1_s', 'joint_2_l', 'joint_3_u', 'joint_4_r', 'joint_5_b', 'joint_6_t']
@@ -85,13 +83,24 @@ class CalibrationNode(Node):
             self.get_logger().info("Calculating tool force...")
 
             wrench_avg = self.get_average_measurements(n=500, period=0.01)
+            
 
             measurement.append(wrench_avg)
 
         ### Now calculate CoG
         CoG = Vector3()
-        Fg = (abs(measurement[0].wrench.force.z) + abs(measurement[1].wrench.force.z))/2.0
-        CoG.z = (sqrt(measurement[2].wrench.torque.x*measurement[2].wrench.torque.x + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
+        Fg = 0.0
+        if self.gravity_axis_in_sensor_frame == "z":
+            Fg = (abs(measurement[0].wrench.force.z) + abs(measurement[1].wrench.force.z))/2.0
+            CoG.z = (sqrt(measurement[2].wrench.torque.x*measurement[2].wrench.torque.x + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
+        elif self.gravity_axis_in_sensor_frame == "x":
+            Fg = (abs(measurement[0].wrench.force.x) + abs(measurement[1].wrench.force.x))/2.0
+            CoG.z = (sqrt(measurement[2].wrench.torque.z*measurement[2].wrench.torque.z + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
+        elif self.gravity_axis_in_sensor_frame == "y":
+            Fg = (abs(measurement[0].wrench.force.y) + abs(measurement[1].wrench.force.y))/2.0
+            CoG.z = (sqrt(measurement[2].wrench.torque.z*measurement[2].wrench.torque.z + measurement[2].wrench.torque.x*measurement[2].wrench.torque.x)) / Fg
+        else:
+            raise ValueError("Non-existent axis value for [gravity_axis_in_sensor_frame]")
         
         self.get_logger().info("Calculated parameters for [" + self.wrench_msg.header.frame_id + "]:\n"
                               +  "CoG_x: " + str(CoG.x) + "\n"
