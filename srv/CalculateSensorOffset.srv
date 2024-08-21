@@ -1,5 +1,0 @@
-bool apply_after_calculation
----
-bool success
-string message
-geometry_msgs/Wrench offset
