@@ -20,7 +20,6 @@ class CalibrationNode(Node):
         super().__init__('calibrate_tool_node')
         
         ### PARAMS:
-        self.tool_name = "tool0"
         self.robot = "yaskawa"
         self.robot_name = "hc20sdtp"
         self.store_to_file = False
@@ -81,21 +80,21 @@ class CalibrationNode(Node):
             self.trajectory_pub_.publish(trajectory)
             self.get_logger().info("Going to position: " + str(point.positions))
             
-            time.sleep(5.0)
+            time.sleep(10.0)
             
             self.get_logger().info("Calculating tool force...")
 
             wrench_avg = self.get_average_measurements(n=500, period=0.01)
 
-            measurement.append(self.wrench_msg.wrench)
+            measurement.append(wrench_avg)
 
         ### Now calculate CoG
         CoG = Vector3()
-        Fg = (abs(measurement[0].force.z) + abs(measurement[1].force.z))/2.0
-        CoG.z = (sqrt(measurement[2].torque.x*measurement[2].torque.x + measurement[2].torque.y*measurement[2].torque.y)) / Fg
+        Fg = (abs(measurement[0].wrench.force.z) + abs(measurement[1].wrench.force.z))/2.0
+        CoG.z = (sqrt(measurement[2].wrench.torque.x*measurement[2].wrench.torque.x + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
         
-        self.get_logger().info("Setting parametes for tool: " + self.tool_name)
-        self.get_logger().info("\nCoG_x: " + str(CoG.x) + "\n"
+        self.get_logger().info("Calculated parameters for [" + self.wrench_msg.header.frame_id + "]:\n"
+                              +  "CoG_x: " + str(CoG.x) + "\n"
                               +  "CoG_y: " + str(CoG.y) + "\n"
                               +  "CoG_z: " + str(CoG.z) + "\n"
                               +  "Fg: " + str(Fg) + "\n")
@@ -103,7 +102,29 @@ class CalibrationNode(Node):
         return
 
     def get_average_measurements(self, n=500, period=0.01):
-        return
+        wrench_average = WrenchStamped()
+        
+        last_msg_time = float(self.get_clock().now().to_msg().nanosec/10e9)
+        i = 0
+        while i < n:
+            msg_time = float(self.wrench_msg.header.stamp.nanosec/10e9)
+            if abs(msg_time - last_msg_time) > period:
+                wrench_average.wrench.force.x += self.wrench_msg.wrench.force.x
+                wrench_average.wrench.force.y += self.wrench_msg.wrench.force.y
+                wrench_average.wrench.force.z += self.wrench_msg.wrench.force.z
+                wrench_average.wrench.torque.x += self.wrench_msg.wrench.torque.x
+                wrench_average.wrench.torque.y += self.wrench_msg.wrench.torque.y
+                wrench_average.wrench.torque.z += self.wrench_msg.wrench.torque.z
+                i += 1
+        
+        wrench_average.wrench.force.x  /= n
+        wrench_average.wrench.force.y  /= n
+        wrench_average.wrench.force.z  /= n
+        wrench_average.wrench.torque.x /= n
+        wrench_average.wrench.torque.y /= n
+        wrench_average.wrench.torque.z /= n           
+        
+        return wrench_average
 
 def main(args=None):
     rclpy.init(args=args)
