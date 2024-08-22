@@ -1,6 +1,4 @@
 #!/usr/bin/env python
-
-from subprocess import call
 from math import sqrt
 import time
 import threading
@@ -42,14 +40,14 @@ class CalibrationNode(Node):
                               [0.0, 0.0, 0.0, 0.0, 0.0, 1.5707963],     
                               [0.0, 0.0, 0.0, 0.0, 0.0, -1.5707963]] 
         
-        calibration_thread = threading.Thread(target=self.calibrate_tool)
+        calibration_thread = threading.Thread(target=self.calibrate)
         calibration_thread.start()
 
     def wrench_callback(self, msg):
         self.wrench_msg = msg
         return
     
-    def calibrate_tool(self):
+    def calibrate(self):
         measurement = []
 
         for i in range(0,len(self.poses)):  
@@ -80,7 +78,7 @@ class CalibrationNode(Node):
 
             measurement.append(wrench_avg)
 
-        ### Now calculate CoG
+        ### Calculate CoG
         CoG = Vector3()
         Fg = 0.0
         if self.gravity_axis_in_sensor_frame == "z":
@@ -95,11 +93,37 @@ class CalibrationNode(Node):
         else:
             raise ValueError("Non-existent axis value for [gravity_axis_in_sensor_frame]")
         
+        self.get_logger().info("\n")
         self.get_logger().info("Calculated parameters for [" + self.wrench_msg.header.frame_id + "]:\n"
                               +  "CoG_x: " + str(CoG.x) + "\n"
                               +  "CoG_y: " + str(CoG.y) + "\n"
                               +  "CoG_z: " + str(CoG.z) + "\n"
                               +  "Fg: " + str(Fg) + "\n")
+
+
+        ### Calculate offset
+        offset_wrench = self.wrench_msg
+        for i in range(1, len(measurement)): # skip first measurement
+            offset_wrench.wrench.force.x += measurement[i].wrench.force.x
+            offset_wrench.wrench.force.y += measurement[i].wrench.force.y
+            offset_wrench.wrench.force.z += measurement[i].wrench.force.z
+            offset_wrench.wrench.torque.x += measurement[i].wrench.torque.x
+            offset_wrench.wrench.torque.y += measurement[i].wrench.torque.y
+            offset_wrench.wrench.torque.z += measurement[i].wrench.torque.z
+        offset_wrench.wrench.force.x /= len(self.poses)
+        offset_wrench.wrench.force.y /= len(self.poses)
+        offset_wrench.wrench.force.z /= len(self.poses)
+        offset_wrench.wrench.torque.x /= len(self.poses)
+        offset_wrench.wrench.torque.y /= len(self.poses)
+        offset_wrench.wrench.torque.z /= len(self.poses)  
+        
+        self.get_logger().info("Calculated offset:\n"
+                              +  "Fx: " + str(offset_wrench.wrench.force.x) + "\n"
+                              +  "Fy: " + str(offset_wrench.wrench.force.y) + "\n"
+                              +  "Fz: " + str(offset_wrench.wrench.force.z) + "\n"
+                              +  "Mx: " + str(offset_wrench.wrench.torque.x) + "\n"
+                              +  "My: " + str(offset_wrench.wrench.torque.y) + "\n"
+                              +  "Mz: " + str(offset_wrench.wrench.torque.z))
 
         return
 
@@ -131,11 +155,11 @@ class CalibrationNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
-    calibrate_tool_node = CalibrationNode()
+    calibration_node = CalibrationNode()
 
-    rclpy.spin(calibrate_tool_node)
+    rclpy.spin(calibration_node)
 
-    calibrate_tool_node.destroy_node()
+    calibration_node.destroy_node()
     rclpy.shutdown()
 
 

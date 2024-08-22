@@ -33,7 +33,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'calibration_node = force_torque_sensor.calibrate_tool:main'
+            'calibration_node = force_torque_sensor.calibrate:main'
         ],
     },
 )
