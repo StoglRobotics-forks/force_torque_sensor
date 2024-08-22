@@ -1,6 +1,7 @@
 calibration_node:
   ros__parameters:
-
+    robot: yaskawa
+    global_frame: world
     joints:
       - joint_1_s
       - joint_2_l
@@ -8,10 +9,6 @@ calibration_node:
       - joint_4_r
       - joint_5_b
       - joint_6_t
-
-    robot: yaskawa
-
     ft_sensor:
-      up: x
       wrench_topic: /force_torque_sensor_broadcaster/wrench
       controller_topic: /position_trajectory_controller/joint_trajectory
