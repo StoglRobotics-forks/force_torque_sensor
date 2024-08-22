@@ -7,17 +7,13 @@ calibration_node:
         size_gt<>: [0]
   robot:
     type: string
-    default_value: ""
+    default_value: "yaskawa"
     description: "robot manufacturer name"
+  global_frame:
+    type: string
+    default_value: "world"
+    description: "World frame, in which gravity is -z direction."
   ft_sensor:
-    up:
-      type: string
-      description: "Axis pointing up in the force torque sensor frame"
-      default_value: "z"
-      validation:
-        size_gt<>: [0]
-        unique<>: null
-        subset_of<>: [["x", "y", "z"]]
     wrench_topic:
       type: string
       default_value: "/wrench"

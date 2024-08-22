@@ -24,7 +24,8 @@ setup(
         (os.path.join('share', package_name, 'config'), glob(os.path.join('config', '*.yaml'))),
     ],
     install_requires=['setuptools',
-                      'generate_parameter_library'],
+                      'generate_parameter_library'
+                      'tf2'],
     zip_safe=True,
     maintainer='Nikola Banovic',
     maintainer_email='nibanovic@gmail.com',

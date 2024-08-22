@@ -4,21 +4,31 @@ import time
 import threading
 
 import rclpy
-import rclpy.duration
 from rclpy.node import Node
+from rclpy.duration import Duration
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import Vector3, WrenchStamped
 from force_torque_sensor.calibration_node_parameters import calibration_node
+
+from tf2_ros import TransformListener, Buffer
+from transforms3d.quaternions import quat2mat
+
+import numpy as np
+
 class CalibrationNode(Node):
 
     def __init__(self):
         super().__init__('calibration_node')
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         
         param_listener = calibration_node.ParamListener(self)
         params = param_listener.get_params()
         self.joint_names = params.joints
         self.robot = params.robot
-        self.gravity_axis_in_sensor_frame = params.ft_sensor.up
+        self.global_frame = params.global_frame
+
 
         self.trajectory_pub_ = self.create_publisher(JointTrajectory, params.ft_sensor.controller_topic, 10)
         self.wrench_sub_ = self.create_subscription(WrenchStamped, params.ft_sensor.wrench_topic, self.wrench_callback, 10)
@@ -72,34 +82,27 @@ class CalibrationNode(Node):
             
             time.sleep(10.0)
             
-            self.get_logger().info("Calculating tool force...")
-
+            self.get_logger().info("Measuring average tool wrench...")
             wrench_avg = self.get_average_measurements(n=500, period=0.01)
+            wrench_avg.header.frame_id = self.wrench_msg.header.frame_id
+
+            #self.debug_print_wrench(wrench_avg)
+            wrench_avg = self.transform_wrench(wrench_avg, self.wrench_msg.header.frame_id, self.global_frame)
+            #self.debug_print_wrench(wrench_avg)
 
             measurement.append(wrench_avg)
 
+
         ### Calculate CoG
         CoG = Vector3()
-        Fg = 0.0
-        if self.gravity_axis_in_sensor_frame == "z":
-            Fg = (abs(measurement[0].wrench.force.z) + abs(measurement[1].wrench.force.z))/2.0
-            CoG.z = (sqrt(measurement[2].wrench.torque.x*measurement[2].wrench.torque.x + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
-        elif self.gravity_axis_in_sensor_frame == "x":
-            Fg = (abs(measurement[0].wrench.force.x) + abs(measurement[1].wrench.force.x))/2.0
-            CoG.z = (sqrt(measurement[2].wrench.torque.z*measurement[2].wrench.torque.z + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
-        elif self.gravity_axis_in_sensor_frame == "y":
-            Fg = (abs(measurement[0].wrench.force.y) + abs(measurement[1].wrench.force.y))/2.0
-            CoG.z = (sqrt(measurement[2].wrench.torque.z*measurement[2].wrench.torque.z + measurement[2].wrench.torque.x*measurement[2].wrench.torque.x)) / Fg
-        else:
-            raise ValueError("Non-existent axis value for [gravity_axis_in_sensor_frame]")
-        
+        Fg = (abs(measurement[0].wrench.force.z) + abs(measurement[1].wrench.force.z))/2.0
+        CoG.z = (sqrt(measurement[2].wrench.torque.x*measurement[2].wrench.torque.x + measurement[2].wrench.torque.y*measurement[2].wrench.torque.y)) / Fg
         self.get_logger().info("\n")
         self.get_logger().info("Calculated parameters for [" + self.wrench_msg.header.frame_id + "]:\n"
                               +  "CoG_x: " + str(CoG.x) + "\n"
                               +  "CoG_y: " + str(CoG.y) + "\n"
                               +  "CoG_z: " + str(CoG.z) + "\n"
                               +  "Fg: " + str(Fg) + "\n")
-
 
         ### Calculate offset
         offset_wrench = self.wrench_msg
@@ -151,6 +154,59 @@ class CalibrationNode(Node):
         wrench_average.wrench.torque.z /= n           
         
         return wrench_average
+    
+    def transform_wrench(self, wrench_msg: WrenchStamped, source, target):
+
+        if source == target:
+            return wrench_msg
+        
+        wrench_msg.header.frame_id = target
+
+        t = None
+        while t is None:
+            try:
+                t = self.tf_buffer.lookup_transform(
+                    target,
+                    source,
+                    time = (self.get_clock().now() - Duration(seconds=0.1)))
+            except Exception as ex:
+                self.get_logger().info(
+                    f'Could not transform {source} to {target}: {ex}.')
+                time.sleep(0.01)
+        
+        rot = quat2mat([t.transform.rotation.w,
+                        t.transform.rotation.x,
+                        t.transform.rotation.y,
+                        t.transform.rotation.z,])
+        
+        ### transform wrench
+        forces = np.array([wrench_msg.wrench.force.x,
+                           wrench_msg.wrench.force.y,
+                           wrench_msg.wrench.force.z])
+        torques = np.array([wrench_msg.wrench.torque.x,
+                            wrench_msg.wrench.torque.y,
+                            wrench_msg.wrench.torque.z])
+        
+        forces = np.matmul(rot, forces)            
+        torques = np.matmul(rot, torques) 
+        
+        wrench_msg.wrench.force.x = forces[0] 
+        wrench_msg.wrench.force.y = forces[1]
+        wrench_msg.wrench.force.z = forces[2]
+        wrench_msg.wrench.torque.x = torques[0]
+        wrench_msg.wrench.torque.y = torques[1]
+        wrench_msg.wrench.torque.z = torques[2]
+
+        return wrench_msg
+
+    def debug_print_wrench(self, wrench_msg: WrenchStamped):
+        self.get_logger().info("Wrench in [" + wrench_msg.header.frame_id + "] frame:\n"
+                              +  "Fx: " + str(wrench_msg.wrench.force.x) + "\n"
+                              +  "Fy: " + str(wrench_msg.wrench.force.y) + "\n"
+                              +  "Fz: " + str(wrench_msg.wrench.force.z) + "\n"
+                              +  "Mx: " + str(wrench_msg.wrench.torque.x) + "\n"
+                              +  "My: " + str(wrench_msg.wrench.torque.y) + "\n"
+                              +  "Mz: " + str(wrench_msg.wrench.torque.z))
 
 def main(args=None):
     rclpy.init(args=args)
