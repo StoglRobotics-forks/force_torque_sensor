@@ -4,6 +4,14 @@ from glob import glob
 
 package_name = 'force_torque_sensor'
 
+
+from generate_parameter_library_py.setup_helper import generate_parameter_module
+
+generate_parameter_module(
+  "calibration_node_parameters", # python module name for parameter library
+  "force_torque_sensor/calibration_node_parameters.yaml", # path to input yaml file
+)
+
 setup(
     name=package_name,
     version='0.0.0',
@@ -12,9 +20,11 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.py')))
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.xml'))),
+        (os.path.join('share', package_name, 'config'), glob(os.path.join('config', '*.yaml'))),
     ],
-    install_requires=['setuptools'],
+    install_requires=['setuptools',
+                      'generate_parameter_library'],
     zip_safe=True,
     maintainer='Nikola Banovic',
     maintainer_email='nibanovic@gmail.com',
@@ -23,7 +33,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'calibrate_tool_node = force_torque_sensor.calibrate_tool:main'
+            'calibration_node = force_torque_sensor.calibrate_tool:main'
         ],
     },
 )

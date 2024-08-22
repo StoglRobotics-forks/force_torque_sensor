@@ -1,0 +1,28 @@
+calibration_node:
+  joints:
+    type: string_array
+    description: "Joint names"
+    default_value: ["joint1", "joint2", "joint3"]
+    validation:
+        size_gt<>: [0]
+  robot:
+    type: string
+    default_value: ""
+    description: "robot manufacturer name"
+  ft_sensor:
+    up:
+      type: string
+      description: "Axis pointing up in the force torque sensor frame"
+      default_value: "z"
+      validation:
+        size_gt<>: [0]
+        unique<>: null
+        subset_of<>: [["x", "y", "z"]]
+    wrench_topic:
+      type: string
+      default_value: "/wrench"
+      description: "topic to get wrench data from"
+    controller_topic:
+      type: string
+      default_value: "/joint_trajectory_controller/joint_trajectory"
+      description: "Topic for sending controller commands"

@@ -1,0 +1,6 @@
+<launch>
+  <node pkg="force_torque_sensor" exec="calibration_node" output="both">\
+    <param from="$(find-pkg-share force_torque_sensor)/config/calibration_node.yaml"/>
+    <param name="use_sim_time" value="true" />
+  </node>
+</launch>

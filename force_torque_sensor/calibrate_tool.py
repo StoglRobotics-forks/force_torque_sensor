@@ -10,25 +10,20 @@ import rclpy.duration
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import Vector3, WrenchStamped
-
-
+from force_torque_sensor.calibration_node_parameters import calibration_node
 class CalibrationNode(Node):
 
     def __init__(self):
-        super().__init__('calibrate_tool_node')
+        super().__init__('calibration_node')
         
-        ### PARAMS:
-        self.robot = "yaskawa"
-        self.robot_name = "hc20sdtp"
-        self.gravity_axis_in_sensor_frame = "x"
+        param_listener = calibration_node.ParamListener(self)
+        params = param_listener.get_params()
+        self.joint_names = params.joints
+        self.robot = params.robot
+        self.gravity_axis_in_sensor_frame = params.ft_sensor.up
 
-        # switch-case on robot name to get these parameters
-        self.joint_names = ['joint_1_s', 'joint_2_l', 'joint_3_u', 'joint_4_r', 'joint_5_b', 'joint_6_t']
-        controller_topic = "/position_trajectory_controller/joint_trajectory"
-        wrench_topic = "/force_torque_sensor_broadcaster/wrench"
-        
-        self.trajectory_pub_ = self.create_publisher(JointTrajectory, controller_topic, 10)
-        self.wrench_sub_ = self.create_subscription(WrenchStamped, wrench_topic, self.wrench_callback, 10)
+        self.trajectory_pub_ = self.create_publisher(JointTrajectory, params.ft_sensor.controller_topic, 10)
+        self.wrench_sub_ = self.create_subscription(WrenchStamped, params.ft_sensor.wrench_topic, self.wrench_callback, 10)
         self.wrench_msg = WrenchStamped()
         
         self.poses = [[0.0, 0.0, 1.5707963, 0.0, -1.5707963, 0.0],
@@ -49,7 +44,6 @@ class CalibrationNode(Node):
         
         calibration_thread = threading.Thread(target=self.calibrate_tool)
         calibration_thread.start()
-
 
     def wrench_callback(self, msg):
         self.wrench_msg = msg
@@ -83,7 +77,6 @@ class CalibrationNode(Node):
             self.get_logger().info("Calculating tool force...")
 
             wrench_avg = self.get_average_measurements(n=500, period=0.01)
-            
 
             measurement.append(wrench_avg)
 
