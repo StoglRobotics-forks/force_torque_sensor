@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
-from subprocess import call
+from dataclasses import dataclass
+from enum import Enum
 from math import sqrt
 import time
 import threading
@@ -9,10 +10,14 @@ from typing import List
 import rclpy
 import rclpy.duration
 from rclpy.node import Node
-from builtin_interfaces.msg import Duration
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import Vector3, WrenchStamped
-from std_msgs.msg import String
+from sensor_msgs.msg import JointState
+
+
+KUKA = "kuka"
+UR = "ur"
+YASKAWA = "yaskawa"
 
 
 class CalibrationNode(Node):
@@ -21,31 +26,43 @@ class CalibrationNode(Node):
         super().__init__("calibrate_tool_node")
 
         ### PARAMS:
-        self.tool_name = "tool0"
-        self.robot = "yaskawa"
-        self.robot_name = "hc20sdtp"
-        self.store_to_file = False
+        self.robot = self.declare_parameter("robot", "yaskawa").value
+        self.joint_names = self.declare_parameter(
+            "joint_names",
+            [
+                "joint_1",
+                "joint_2",
+                "joint_3",
+                "joint_4",
+                "joint_5",
+                "joint_6",
+            ],
+        ).value
+        self.controller_topic = self.declare_parameter(
+            "controller_topic", "/position_trajectory_controller/joint_trajectory"
+        ).value
+        self.wrench_topic = self.declare_parameter(
+            "wrench_topic", "/force_torque_sensor_broadcaster/raw_wrench"
+        ).value
+        self.joint_states_topic = self.declare_parameter(
+            "joint_states_topic", "/joint_states"
+        ).value
 
-        # switch-case on robot name to get these parameters
-        self.joint_names = [
-            "joint_1_s",
-            "joint_2_l",
-            "joint_3_u",
-            "joint_4_r",
-            "joint_5_b",
-            "joint_6_t",
-        ]
-        controller_topic = "/position_trajectory_controller/joint_trajectory"
-        wrench_topic = "/force_torque_sensor_broadcaster/wrench"
+        self.data_mutex = threading.Lock()
 
         self.trajectory_pub_ = self.create_publisher(
-            JointTrajectory, controller_topic, 10
+            JointTrajectory, self.controller_topic, 10
         )
-        self.wrench_sub_ = self.create_subscription(
-            WrenchStamped, wrench_topic, self.wrench_callback, 10
-        )
-        self.data_mutex = threading.Lock()
+
         self.wrench_msg = WrenchStamped()
+        self.wrench_sub_ = self.create_subscription(
+            WrenchStamped, self.wrench_topic, self.wrench_callback, 10
+        )
+
+        self.joint_state_msg = JointState()
+        self.joint_states_sub_ = self.create_subscription(
+            JointState, self.joint_states_topic, self.joint_states_callback, 10
+        )
 
         self.poses = [
             [0.0, 0.0, 1.5707963, 0.0, -1.5707963, 0.0],
@@ -74,11 +91,24 @@ class CalibrationNode(Node):
         calibration_thread = threading.Thread(target=self.calibrate_tool)
         calibration_thread.start()
 
-    def wrench_callback(self, msg):
+    def wrench_callback(self, msg: WrenchStamped):
         with self.data_mutex:
             self.wrench_msg = msg
 
+    def joint_states_callback(self, msg: JointState):
+        with self.data_mutex:
+            self.joint_state_msg = msg
+
     def calibrate_tool(self):
+        self.get_logger().info(
+            "Starting calibration process:\n"
+            f"\t- robot: '{self.robot}'\n"
+            f"\t- joint names: {self.joint_names}\n"
+            f"\t- controller topic '{self.controller_topic}'\n"
+            f"\t- wrench topic '{self.wrench_topic}'\n"
+            f"\t- joint states topic '{self.joint_states_topic}'"
+        )
+
         measurements: List[WrenchStamped] = []
 
         for i in range(0, len(self.poses)):
@@ -88,11 +118,11 @@ class CalibrationNode(Node):
             trajectory.joint_names = self.joint_names
 
             point.time_from_start.sec = 2
-            if self.robot == "kuka":
+            if self.robot == KUKA:
                 point.positions = self.poses_kuka[i]
-            elif self.robot == "ur":
+            elif self.robot == UR:
                 point.positions = self.poses_ur[i]
-            elif self.robot == "yaskawa":
+            elif self.robot == YASKAWA:
                 point.positions = self.poses_yaskawa[i]
             else:
                 point.positions = self.poses[i]
@@ -143,7 +173,8 @@ class CalibrationNode(Node):
         ) / Fg
 
         self.get_logger().info(
-            f"Calculated Center of Gravity (CoG) for {self.tool_name}:\n"
+            f"Calculated Center of Gravity (CoG) from topic '{self.wrench_topic}' "
+            f"for frame_id {self.wrench_msg.header.frame_id}:\n"
             f"\t- CoG_x: {CoG.x}\n"
             f"\t- CoG_y: {CoG.y}\n"
             f"\t- CoG_z: {CoG.z}\n"

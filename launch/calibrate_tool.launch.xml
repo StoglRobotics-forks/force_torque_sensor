@@ -1,0 +1,45 @@
+<!--
+Copyright (c) 2024, Stogl Robotics Consulting UG (haftungsbeschränkt)
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+
+Source of this file are templates in https://github.com/StoglRobotics/ros_team_workspace repository.
+-->
+
+<launch>
+  <arg name="use_sim_time" default="false" description="Use simulation time"/>
+  <arg name="robot" default="yaskawa" description="Name of the robot"/>
+  <arg name="joint_names"
+       default="['joint_1_s', 'joint_2_l', 'joint_3_u', 'joint_4_r', 'joint_5_b', 'joint_6_t']"
+       description="Joint names of the robot"/>
+  <arg name="controller_topic"
+       default="/position_trajectory_controller/joint_trajectory"
+       description="Topic for sending joint trajectories"/>
+  <arg name="wrench_topic"
+       default="/force_torque_sensor_broadcaster/wrench"
+       description="Topic for publishing raw wrench data"/>
+  <arg name="joint_states_topic"
+       default="/joint_states"
+       description="Topic for publishing joint states"/>
+
+  <node pkg="force_torque_sensor" exec="calibrate_tool_node" output="screen">
+    <param name="use_sim_time" value="$(var use_sim_time)"/>
+    <param name="robot" value="$(var robot)"/>
+    <param name="joint_names" value="$(var joint_names)"/>
+    <param name="controller_topic" value="$(var controller_topic)"/>
+    <param name="wrench_topic" value="$(var wrench_topic)"/>
+    <param name="joint_states_topic" value="$(var joint_states_topic)"/>
+  </node>
+
+</launch>
