@@ -20,6 +20,14 @@ UR = "ur"
 YASKAWA = "yaskawa"
 
 
+def positions_diff(a: List[float], b: List[float]) -> List[float]:
+    return [abs(a[i] - b[i]) for i in range(len(a))]
+
+
+def positions_near(a: List[float], b: List[float], eps=0.01) -> bool:
+    return all([diff < eps for diff in positions_diff(a, b)])
+
+
 class CalibrationNode(Node):
 
     def __init__(self):
@@ -46,6 +54,9 @@ class CalibrationNode(Node):
         ).value
         self.joint_states_topic = self.declare_parameter(
             "joint_states_topic", "/joint_states"
+        ).value
+        self.max_allowed_velocity_rad_per_sec = self.declare_parameter(
+            "max_allowed_velocity_rad_per_sec", 0.1
         ).value
 
         self.data_mutex = threading.Lock()
@@ -117,7 +128,6 @@ class CalibrationNode(Node):
             trajectory.header.stamp = self.get_clock().now().to_msg()
             trajectory.joint_names = self.joint_names
 
-            point.time_from_start.sec = 2
             if self.robot == KUKA:
                 point.positions = self.poses_kuka[i]
             elif self.robot == UR:
@@ -127,13 +137,25 @@ class CalibrationNode(Node):
             else:
                 point.positions = self.poses[i]
 
+            diff = positions_diff(self.joint_state_msg.position, point.positions)
+            max_angle_diff = max(diff)
+            point.time_from_start.sec = (
+                int(max_angle_diff / self.max_allowed_velocity_rad_per_sec) + 1
+            )
+
             trajectory.points.append(point)
             self.trajectory_pub_.publish(trajectory)
             self.get_logger().info(
                 f"Moving to position {i + 1}/{len(self.poses)}: {point.positions}"
             )
 
-            time.sleep(point.time_from_start.sec * 2)
+            while not positions_near(self.joint_state_msg.position, point.positions):
+                self.get_logger().info(
+                    f"Current joint positions: {self.joint_state_msg.position} "
+                    f"vs. target positions: {point.positions}\n"
+                    "Waiting for the robot to reach the target position..."
+                )
+                time.sleep(0.1)
 
             num_measurements = 500
             measurement_period = 0.01
