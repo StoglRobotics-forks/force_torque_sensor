@@ -18,16 +18,16 @@ Source of this file are templates in https://github.com/StoglRobotics/ros_team_w
 -->
 
 <launch>
-  <arg name="use_sim_time" default="false" description="Use simulation time"/>
+  <arg name="use_sim_time" default="true" description="Use simulation time"/>
   <arg name="robot" default="yaskawa" description="Name of the robot"/>
   <arg name="joint_names"
        default="['joint_1_s', 'joint_2_l', 'joint_3_u', 'joint_4_r', 'joint_5_b', 'joint_6_t']"
        description="Joint names of the robot"/>
   <arg name="controller_topic"
-       default="/position_trajectory_controller/joint_trajectory"
+       default="/admittance_trajectory_controller/joint_trajectory"
        description="Topic for sending joint trajectories"/>
   <arg name="wrench_topic"
-       default="/force_torque_sensor_broadcaster/wrench"
+       default="/force_torque_sensor_broadcaster/raw_wrench"
        description="Topic for publishing raw wrench data"/>
   <arg name="joint_states_topic"
        default="/joint_states"
