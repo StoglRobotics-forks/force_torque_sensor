@@ -9,10 +9,16 @@ from typing import List
 
 import rclpy
 import rclpy.duration
+from rclpy.time import Duration
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from geometry_msgs.msg import Vector3, WrenchStamped
+from rclpy.action import ActionClient
 from sensor_msgs.msg import JointState
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from moveit_msgs.action import ExecuteTrajectory
+from moveit_msgs.msg import MoveItErrorCodes
+from rclpy.executors import MultiThreadedExecutor
 
 
 KUKA = "kuka"
@@ -56,13 +62,21 @@ class CalibrationNode(Node):
             "joint_states_topic", "/joint_states"
         ).value
         self.max_allowed_velocity_rad_per_sec = self.declare_parameter(
-            "max_allowed_velocity_rad_per_sec", 0.1
+            "max_allowed_velocity_rad_per_sec", 0.3
         ).value
 
         self.data_mutex = threading.Lock()
 
-        self.trajectory_pub_ = self.create_publisher(
-            JointTrajectory, self.controller_topic, 10
+        # self.trajectory_pub_ = self.create_publisher(
+        #     JointTrajectory, self.controller_topic, 10
+        # )
+
+        self.action_client_callback_group = MutuallyExclusiveCallbackGroup()
+        self.execute_trajectory_client = ActionClient(
+            self,
+            ExecuteTrajectory,
+            "/execute_trajectory",
+            callback_group=self.action_client_callback_group,
         )
 
         self.wrench_msg = WrenchStamped()
@@ -70,16 +84,17 @@ class CalibrationNode(Node):
             WrenchStamped, self.wrench_topic, self.wrench_callback, 10
         )
 
-        self.joint_state_msg = JointState()
+        # self.joint_state_msg = JointState()
+        self.current_joint_positions = None
         self.joint_states_sub_ = self.create_subscription(
             JointState, self.joint_states_topic, self.joint_states_callback, 10
         )
 
-        self.poses = [
-            [0.0, 0.0, 1.5707963, 0.0, -1.5707963, 0.0],
-            [0.0, 0.0, 1.5707963, 0.0, 1.5707963, 0.0],
-            [0.0, 0.0, 0.0, 0.0, 1.5707963, 0.0],
-        ]
+        # self.poses = [
+        #     [0.0, 0.0, 1.5707963, 0.0, -1.5707963, 0.0],
+        #     [0.0, 0.0, 1.5707963, 0.0, 1.5707963, 0.0],
+        #     [0.0, 0.0, 0.0, 0.0, 1.5707963, 0.0],
+        # ]
 
         self.poses_kuka = [
             [0.0, -1.5707963, 1.5707963, 0.0, -1.5707963, 0.0],
@@ -94,10 +109,22 @@ class CalibrationNode(Node):
         ]  # right
 
         self.poses_yaskawa = [
-            [0.0, 0.509, -0.368, 0.0, 0.878, 0.0],
+            # in degrees: [0.0, 29.2, -21.1, 0.0, 50.2, 0.0]
+            # [0.0, 0.509, -0.368, 0.0, 0.878, -1.5707963],
+            # in degrees: [0.0, 29.2, -21.1, 0.0, 50.2, 90.0]
             [0.0, 0.509, -0.368, 0.0, 0.878, 1.5707963],
+            # in degrees: [0.0, 29.2, -21.1, 0.0, 50.2, -90.0]
             [0.0, 0.509, -0.368, 0.0, 0.878, -1.5707963],
         ]
+
+        if self.robot == KUKA:
+            self.poses = self.poses_kuka
+        elif self.robot == UR:
+            self.poses = self.poses_ur
+        elif self.robot == YASKAWA:
+            self.poses = self.poses_yaskawa
+        else:
+            raise ValueError(f"Unknown robot '{self.robot}'")
 
         calibration_thread = threading.Thread(target=self.calibrate_tool)
         calibration_thread.start()
@@ -108,7 +135,60 @@ class CalibrationNode(Node):
 
     def joint_states_callback(self, msg: JointState):
         with self.data_mutex:
-            self.joint_state_msg = msg
+            for i in range(len(self.joint_names)):
+                if self.joint_names[i] not in msg.name:
+                    self.get_logger().error(
+                        f"Joint '{self.joint_names[i]}' not found in joint states message"
+                    )
+                    return
+
+            for i in range(len(self.joint_names)):
+                if self.current_joint_positions is None:
+                    self.current_joint_positions = [0] * len(self.joint_names)
+
+                idx = msg.name.index(self.joint_names[i])
+                self.current_joint_positions[i] = msg.position[idx]
+
+    def send_joint_trajectory(
+        self,
+        joint_positions: List[float],
+        duration: float = 5.0,
+    ) -> bool:
+        self.get_logger().info(
+            f"Sending joint trajectory positions {joint_positions} in {duration} seconds"
+            f" to controller '{self.controller_topic}'"
+        )
+        self.execute_trajectory_client.wait_for_server()
+        goal = ExecuteTrajectory.Goal()
+        goal.controller_names = ["position_trajectory_controller"]
+        traj = JointTrajectory()
+        traj.joint_names = self.joint_names
+        start_point = JointTrajectoryPoint()
+
+        while self.current_joint_positions is None:
+            self.get_logger().info("Waiting for joint states to be published...")
+            time.sleep(0.1)
+
+        start_point.positions = self.current_joint_positions
+        start_point.time_from_start = Duration(seconds=0.0).to_msg()
+        traj.points.append(start_point)
+        end_point = JointTrajectoryPoint()
+        end_point.positions = joint_positions
+        end_point.time_from_start = Duration(seconds=duration).to_msg()
+        traj.points.append(end_point)
+        goal.trajectory.joint_trajectory = traj
+        exec_result: ExecuteTrajectory.Result = (
+            self.execute_trajectory_client.send_goal(goal).result
+        )
+        if exec_result.error_code.val == MoveItErrorCodes.SUCCESS:
+            self.get_logger().info("Joint trajectory execution succeeded.")
+            return True
+        else:
+            self.get_logger().error(
+                f"Joint trajectory execution failed with error code: {exec_result.error_code.val}"
+                f" and message: {exec_result.error_code.message}"
+            )
+            return False
 
     def calibrate_tool(self):
         self.get_logger().info(
@@ -122,40 +202,30 @@ class CalibrationNode(Node):
 
         measurements: List[WrenchStamped] = []
 
-        for i in range(0, len(self.poses)):
-            trajectory = JointTrajectory()
-            point = JointTrajectoryPoint()
-            trajectory.header.stamp = self.get_clock().now().to_msg()
-            trajectory.joint_names = self.joint_names
+        if self.current_joint_positions is None:
+            self.get_logger().info("Waiting for joint states to be published...")
+            while self.current_joint_positions is None:
+                time.sleep(0.1)
 
-            if self.robot == KUKA:
-                point.positions = self.poses_kuka[i]
-            elif self.robot == UR:
-                point.positions = self.poses_ur[i]
-            elif self.robot == YASKAWA:
-                point.positions = self.poses_yaskawa[i]
-            else:
-                point.positions = self.poses[i]
-
-            diff = positions_diff(self.joint_state_msg.position, point.positions)
+        for i in range(len(self.poses)):
+            diff = positions_diff(self.current_joint_positions, self.poses[i])
             max_angle_diff = max(diff)
-            point.time_from_start.sec = (
+            time_from_start_sec = (
                 int(max_angle_diff / self.max_allowed_velocity_rad_per_sec) + 1
             )
 
-            trajectory.points.append(point)
-            self.trajectory_pub_.publish(trajectory)
             self.get_logger().info(
-                f"Moving to position {i + 1}/{len(self.poses)}: {point.positions}"
+                f"Moving to position {i + 1}/{len(self.poses)}: {self.poses[i]}"
+                f"\n\t- current joint positions: {self.current_joint_positions}"
             )
 
-            while not positions_near(self.joint_state_msg.position, point.positions):
-                self.get_logger().info(
-                    f"Current joint positions: {self.joint_state_msg.position} "
-                    f"vs. target positions: {point.positions}\n"
-                    "Waiting for the robot to reach the target position..."
+            if not self.send_joint_trajectory(
+                joint_positions=self.poses[i], duration=time_from_start_sec
+            ):
+                self.get_logger().error(
+                    f"Failed to send joint trajectory to position {i + 1}/{len(self.poses)}"
                 )
-                time.sleep(0.1)
+                exit(0)
 
             num_measurements = 500
             measurement_period = 0.01
@@ -176,23 +246,25 @@ class CalibrationNode(Node):
         ### Now calculate CoG
         CoG = Vector3()
         Fg = (
-            abs(measurements[0].wrench.force.z) + abs(measurements[1].wrench.force.z)
+            abs(measurements[0].wrench.force.y) + abs(measurements[1].wrench.force.y)
         ) / 2.0
         if Fg == 0:
             self.get_logger().error("Fg is zero, cannot calculate CoG")
             return
 
         # Assuming symmetry around the z-axis, calculating x, y, z components
-        # TESTING
-        CoG.x = -measurements[2].wrench.torque.y / Fg
-        CoG.y = measurements[2].wrench.torque.x / Fg
+        CoG.x = 0.0  # assuming symmetry around the z-axis
+        CoG.y = measurements[0].wrench.torque.z / Fg
+        CoG.z = -measurements[0].wrench.torque.y / Fg
+        # CoG.x = -measurements[1].wrench.torque.x / Fg
+        # CoG.y = measurements[2].wrench.torque.x / Fg
 
-        CoG.z = (
-            sqrt(
-                measurements[2].wrench.torque.x ** 2
-                + measurements[2].wrench.torque.y ** 2
-            )
-        ) / Fg
+        # CoG.z = (
+        #     sqrt(
+        #         measurements[2].wrench.torque.x ** 2
+        #         + measurements[2].wrench.torque.y ** 2
+        #     )
+        # ) / Fg
 
         self.get_logger().info(
             f"Calculated Center of Gravity (CoG) from topic '{self.wrench_topic}' "
@@ -229,9 +301,13 @@ class CalibrationNode(Node):
 def main(args=None):
     rclpy.init(args=args)
 
+    executor = MultiThreadedExecutor()
     calibrate_tool_node = CalibrationNode()
 
-    rclpy.spin(calibrate_tool_node)
+    try:
+        rclpy.spin(calibrate_tool_node, executor)
+    except KeyboardInterrupt:
+        pass
 
     calibrate_tool_node.destroy_node()
     rclpy.shutdown()
